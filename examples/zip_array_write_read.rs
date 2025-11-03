@@ -9,7 +9,7 @@ use std::{
 use walkdir::WalkDir;
 
 use zarrs::{
-    array::{codec, Array, DataType, ZARR_NAN_F32},
+    array::{Array, DataType, ZARR_NAN_F32, codec},
     array_subset::ArraySubset,
     filesystem::FilesystemStore,
     node::Node,

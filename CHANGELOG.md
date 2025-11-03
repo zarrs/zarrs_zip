@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add trusted publishing
 
 ### Changed
+- **Breaking**: bump MSRV to 1.86
 - Move to new repository: https://github.com/zarrs/zarrs_zip
 
 ## [0.3.0] - 2025-09-18

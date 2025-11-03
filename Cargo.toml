@@ -1,9 +1,9 @@
 [package]
 name = "zarrs_zip"
-version = "0.3.1"
+version = "0.4.0"
 authors = ["Lachlan Deakin <ljdgit@gmail.com>"]
-edition = "2021"
-rust-version = "1.77"
+edition = "2024"
+rust-version = "1.86"
 description = "A storage adapter for zip files for the zarrs crate"
 homepage = "https://zarrs.dev"
 documentation = "https://docs.rs/zarrs_zip"
@@ -25,6 +25,10 @@ module_name_repetitions = "allow"
 missing_panics_doc = "warn"
 missing_errors_doc = "warn"
 # wildcard_enum_match_arm = "warn"
+
+[[example]]
+name = "zip_array_write_read"
+doc-scrape-examples = true
 
 [dependencies]
 derive_more = { version = "2.0.0", features = ["from"] }

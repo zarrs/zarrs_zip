@@ -23,15 +23,15 @@
 //! - the MIT license [LICENSE-MIT](https://docs.rs/crate/zarrs_zip/latest/source/LICENCE-MIT) or <http://opensource.org/licenses/MIT>, at your option.
 
 use zarrs_storage::{
-    byte_range::{extract_byte_ranges_read_seek, ByteRangeIterator},
     Bytes, ListableStorageTraits, MaybeBytesIterator, ReadableStorageTraits, StorageError,
     StorageValueIO, StoreKey, StoreKeys, StoreKeysPrefixes, StorePrefix, StorePrefixes,
+    byte_range::{ByteRangeIterator, extract_byte_ranges_read_seek},
 };
 
 use itertools::Itertools;
 use std::sync::Mutex;
 use thiserror::Error;
-use zip::{result::ZipError, ZipArchive};
+use zip::{ZipArchive, result::ZipError};
 
 use std::{path::PathBuf, sync::Arc};
 
