@@ -19,6 +19,8 @@ let zip_key = StoreKey::new("zarr.zip")?;
 let zip_store = Arc::new(ZipStorageAdapter::new(fs_store, zip_key)?);
 ```
 
+See a full example at [examples/zip_array_write_read.rs](./examples/zip_array_write_read.rs).
+
 ## Licence
 `zarrs_zip` is licensed under either of
  - the Apache License, Version 2.0 [LICENSE-APACHE](./LICENCE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0> or

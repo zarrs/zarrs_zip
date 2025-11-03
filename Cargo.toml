@@ -1,28 +1,41 @@
 [package]
 name = "zarrs_zip"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["Lachlan Deakin <ljdgit@gmail.com>"]
 edition = "2021"
 rust-version = "1.77"
 description = "A storage adapter for zip files for the zarrs crate"
 homepage = "https://zarrs.dev"
 documentation = "https://docs.rs/zarrs_zip"
-repository = "https://github.com/zarrs/zarrs/tree/main/zarrs_zip"
+repository = "https://github.com/zarrs/zarrs_zip"
 license = "MIT OR Apache-2.0"
 keywords = ["zarr", "zarrs", "storage", "store", "zip"]
 categories = ["encoding"]
 
-[lints]
-workspace = true
+[lints.rust]
+unused_variables = "warn"
+dead_code = "warn"
+missing_docs = "warn"
+unreachable_pub = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_panics_doc = "warn"
+missing_errors_doc = "warn"
+# wildcard_enum_match_arm = "warn"
 
 [dependencies]
 derive_more = { version = "2.0.0", features = ["from"] }
 itertools = "0.14.0"
-thiserror.workspace = true
-zarrs_storage.workspace = true
-zip.workspace = true
+thiserror = "2.0.12"
+zarrs_storage = "0.4.0"
+zip = "4.0.0"
 
 [dev-dependencies]
+chrono = "0.4.42"
 tempfile = "3"
 walkdir = "2.3.2"
-zarrs_filesystem.workspace = true
+zarrs = { version = "0.22.5", features = ["gzip"] }
+zarrs_filesystem = "0.3.4"

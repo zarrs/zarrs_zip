@@ -15,6 +15,8 @@
 //! # Ok::<_, Box<dyn std::error::Error>>(())
 //! ```
 //!
+//! See a full example at [examples/zip_array_write_read.rs](https://github.com/zarrs/zarrs_zip/blob/main/examples/zip_array_write_read.rs).
+//!
 //! ## Licence
 //! `zarrs_zip` is licensed under either of
 //! - the Apache License, Version 2.0 [LICENSE-APACHE](https://docs.rs/crate/zarrs_zip/latest/source/LICENCE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0> or

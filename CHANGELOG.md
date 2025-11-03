@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Move to new repository: https://github.com/zarrs/zarrs_zip
+
 ## [0.3.0] - 2025-09-18
 
 ### Changed
