@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2025-11-04
+
 ### Added
 - Add trusted publishing
 
@@ -53,10 +55,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
  - Split from the `zarrs_storage` crate
 
-[unreleased]: https://github.com/zarrs/zarrs/compare/zarrs_zip-v0.3.0...HEAD
-[0.3.0]: https://github.com/LDeakin/zarrs/releases/tag/zarrs_zip-v0.3.0
-[0.2.3]: https://github.com/LDeakin/zarrs/releases/tag/zarrs_zip-v0.2.3
-[0.2.2]: https://github.com/LDeakin/zarrs/releases/tag/zarrs_zip-v0.2.2
-[0.2.1]: https://github.com/LDeakin/zarrs/releases/tag/zarrs_zip-v0.2.1
-[0.2.0]: https://github.com/LDeakin/zarrs/releases/tag/zarrs_zip-v0.2.0
-[0.1.0]: https://github.com/LDeakin/zarrs/releases/tag/zarrs_zip-v0.1.0
+[unreleased]: https://github.com/zarrs/zarrs_zip/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/zarrs/zarrs_zip/releases/tag/v0.4.0
+[0.3.0]: https://github.com/zarrs/zarrs/releases/tag/zarrs_zip-v0.3.0
+[0.2.3]: https://github.com/zarrs/zarrs/releases/tag/zarrs_zip-v0.2.3
+[0.2.2]: https://github.com/zarrs/zarrs/releases/tag/zarrs_zip-v0.2.2
+[0.2.1]: https://github.com/zarrs/zarrs/releases/tag/zarrs_zip-v0.2.1
+[0.2.0]: https://github.com/zarrs/zarrs/releases/tag/zarrs_zip-v0.2.0
+[0.1.0]: https://github.com/zarrs/zarrs/releases/tag/zarrs_zip-v0.1.0
