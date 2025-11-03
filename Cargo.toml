@@ -35,7 +35,7 @@ derive_more = { version = "2.0.0", features = ["from"] }
 itertools = "0.14.0"
 thiserror = "2.0.12"
 zarrs_storage = "0.4.0"
-zip = "4.0.0"
+zip = "6.0.0"
 
 [dev-dependencies]
 chrono = "0.4.42"
