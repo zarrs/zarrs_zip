@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Add async support
+- Add `zip_array_write_read_async` example
+
+### Changed
+- Switch to the `rc-zip` crate internally from `zip`
+- **Breaking**: Add `InvalidStoreKey` and `InvalidStorePrefix` errors to `ZipStorageAdapterCreateError`
+  - These catch node names and symlinks
+
+### Fixed
+- Improve performance: support concurrent reading of multiple zip entries
+
 ## [0.4.0] - 2025-11-04
 
 ### Added
