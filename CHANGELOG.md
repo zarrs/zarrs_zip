@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-01-13
+
 ### Added
 - Add async support
 - Add `zip_array_write_read_async` example
@@ -67,7 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
  - Split from the `zarrs_storage` crate
 
-[unreleased]: https://github.com/zarrs/zarrs_zip/compare/v0.4.0...HEAD
+[unreleased]: https://github.com/zarrs/zarrs_zip/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/zarrs/zarrs_zip/releases/tag/v0.5.0
 [0.4.0]: https://github.com/zarrs/zarrs_zip/releases/tag/v0.4.0
 [0.3.0]: https://github.com/zarrs/zarrs/releases/tag/zarrs_zip-v0.3.0
 [0.2.3]: https://github.com/zarrs/zarrs/releases/tag/zarrs_zip-v0.2.3
