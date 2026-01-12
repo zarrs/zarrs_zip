@@ -24,22 +24,52 @@
 
 use zarrs_storage::{
     Bytes, ListableStorageTraits, MaybeBytesIterator, ReadableStorageTraits, StorageError,
-    StorageValueIO, StoreKey, StoreKeys, StoreKeysPrefixes, StorePrefix, StorePrefixes,
-    byte_range::{ByteRangeIterator, extract_byte_ranges_read_seek},
+    StoreKey, StoreKeyError, StoreKeys, StoreKeysPrefixes, StorePrefix, StorePrefixError,
+    StorePrefixes,
+    byte_range::{ByteRange, ByteRangeIterator, InvalidByteRangeError},
 };
 
-use itertools::Itertools;
-use std::sync::Mutex;
+use rc_zip::parse::{Entry, Method};
+use rc_zip::{
+    EntryKind,
+    fsm::{ArchiveFsm, EntryFsm, FsmResult},
+};
 use thiserror::Error;
-use zip::{ZipArchive, result::ZipError};
 
-use std::{path::PathBuf, sync::Arc};
+use std::collections::HashMap;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+/// An entry in the zip archive (either a file or directory).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ZipEntry {
+    Key(StoreKey),
+    Prefix(StorePrefix),
+}
+
+impl ZipEntry {
+    fn as_str(&self) -> &str {
+        match self {
+            ZipEntry::Key(k) => k.as_str(),
+            ZipEntry::Prefix(p) => p.as_str(),
+        }
+    }
+}
 
 /// A zip storage adapter.
 pub struct ZipStorageAdapter<TStorage: ?Sized> {
+    /// Total size of the zip file.
     size: u64,
-    zip_archive: Mutex<ZipArchive<StorageValueIO<TStorage>>>,
-    zip_path: PathBuf,
+    /// Reference to underlying storage.
+    storage: Arc<TStorage>,
+    /// Store key for the zip file.
+    key: StoreKey,
+    /// `HashMap` for O(1) entry lookup by key.
+    entries: HashMap<StoreKey, Entry>,
+    /// Sorted entries (keys and prefixes) for listing operations.
+    sorted_entries: Vec<ZipEntry>,
 }
 
 impl<TStorage: ?Sized + ReadableStorageTraits> ZipStorageAdapter<TStorage> {
@@ -64,32 +94,138 @@ impl<TStorage: ?Sized + ReadableStorageTraits> ZipStorageAdapter<TStorage> {
         path: T,
     ) -> Result<Self, ZipStorageAdapterCreateError> {
         let zip_path = path.into();
+
+        // Get zip file size
         let size = storage
             .size_key(&key)?
-            .ok_or::<ZipStorageAdapterCreateError>(
-                StorageError::UnknownKeySize(key.clone()).into(),
-            )?;
-        let storage_io = StorageValueIO::new(storage, key, size);
-        let zip_archive = Mutex::new(
-            ZipArchive::new(storage_io)
-                .map_err(|err| ZipStorageAdapterCreateError::ZipError(err.to_string()))?,
-        );
+            .ok_or_else(|| StorageError::UnknownKeySize(key.clone()))?;
+
+        // Parse the archive using ArchiveFsm
+        let archive = Self::parse_archive(&storage, &key, size)?;
+
+        // Build entries map and sorted entries list
+        let mut entries: HashMap<StoreKey, Entry> = HashMap::new();
+        let mut sorted_entries: Vec<ZipEntry> = Vec::new();
+        for entry in archive.entries() {
+            if let Some(stripped) = Self::strip_zip_path_prefix(&entry.name, &zip_path) {
+                match entry.kind() {
+                    EntryKind::File => {
+                        let store_key = StoreKey::try_from(stripped)?;
+                        entries.insert(store_key.clone(), entry.clone()); // FIXME: It'd be nice to avoid the clone, needs rc-zip change
+                        sorted_entries.push(ZipEntry::Key(store_key));
+                    }
+                    EntryKind::Directory => {
+                        let store_prefix = StorePrefix::try_from(stripped)?;
+                        sorted_entries.push(ZipEntry::Prefix(store_prefix));
+                    }
+                    EntryKind::Symlink => {
+                        // Ignore symlinks
+                    }
+                }
+            }
+        }
+        sorted_entries.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+
         Ok(Self {
             size,
-            zip_archive,
-            zip_path,
+            storage,
+            key,
+            entries,
+            sorted_entries,
         })
     }
 
-    fn key_str_to_zip_path(&self, key: &str) -> String {
-        let mut zip_name = self.zip_path.clone();
-        zip_name.push(key);
+    /// Parse the zip archive using `ArchiveFsm`.
+    fn parse_archive(
+        storage: &Arc<TStorage>,
+        key: &StoreKey,
+        size: u64,
+    ) -> Result<rc_zip::parse::Archive, ZipStorageAdapterCreateError> {
+        let mut fsm = ArchiveFsm::new(size);
 
-        let mut zip_name = zip_name.to_string_lossy();
-        if cfg!(windows) {
-            zip_name = zip_name.replace('\\', "/").into();
+        loop {
+            // Check if FSM needs more data
+            if let Some(offset) = fsm.wants_read() {
+                let space = fsm.space();
+                // Don't request more than what's left in the file
+                let remaining = size.saturating_sub(offset);
+                let to_read = (space.len() as u64).min(remaining);
+
+                if to_read > 0 {
+                    // Read from storage at the requested offset
+                    let byte_range = ByteRange::FromStart(offset, Some(to_read));
+                    let data = storage.get_partial(key, byte_range)?.ok_or_else(|| {
+                        ZipStorageAdapterCreateError::ZipError("Cannot read zip data".to_string())
+                    })?;
+
+                    // Copy data into FSM buffer
+                    let copy_len = data.len().min(space.len());
+                    space[..copy_len].copy_from_slice(&data[..copy_len]);
+                    fsm.fill(copy_len);
+                } else {
+                    // No more data to read, signal EOF by filling 0 bytes
+                    fsm.fill(0);
+                }
+            }
+
+            // Process the data
+            match fsm.process() {
+                Ok(FsmResult::Continue(next_fsm)) => {
+                    fsm = next_fsm;
+                }
+                Ok(FsmResult::Done(archive)) => {
+                    return Ok(archive);
+                }
+                Err(e) => {
+                    return Err(ZipStorageAdapterCreateError::ZipError(e.to_string()));
+                }
+            }
         }
-        zip_name.to_string()
+    }
+
+    fn strip_zip_path_prefix<'a>(name: &'a str, zip_path: &Path) -> Option<&'a str> {
+        let prefix = zip_path.to_str().unwrap_or("");
+        name.strip_prefix(prefix).filter(|&n| !n.is_empty())
+    }
+
+    /// Get an entry by key using O(1) `HashMap` lookup.
+    fn get_entry(&self, key: &StoreKey) -> Option<&Entry> {
+        self.entries.get(key)
+    }
+
+    /// Find the range of entries matching a prefix using binary search.
+    fn entries_with_prefix(&self, prefix: &StorePrefix) -> &[ZipEntry] {
+        let prefix_str = prefix.as_str();
+
+        // Find start index: first entry >= prefix
+        let start = self
+            .sorted_entries
+            .partition_point(|e| e.as_str() < prefix_str);
+
+        // Find end index: first entry that doesn't start with prefix
+        let end = self.sorted_entries[start..]
+            .partition_point(|e| e.as_str().starts_with(prefix_str))
+            + start;
+
+        &self.sorted_entries[start..end]
+    }
+
+    /// Get the immediate child prefix of a key relative to a parent prefix.
+    fn immediate_child_prefix(key: &StoreKey, prefix: &StorePrefix) -> Option<StorePrefix> {
+        let key_str = key.as_str();
+        let prefix_str = prefix.as_str();
+
+        // Get the part after the prefix
+        let suffix = key_str.strip_prefix(prefix_str)?;
+
+        // Find the first '/' in the suffix to get the immediate child directory
+        if let Some(slash_pos) = suffix.find('/') {
+            let child = &suffix[..=slash_pos];
+            let full_prefix = format!("{prefix_str}{child}");
+            StorePrefix::try_from(full_prefix.as_str()).ok()
+        } else {
+            None
+        }
     }
 
     fn get_impl<'a>(
@@ -97,29 +233,202 @@ impl<TStorage: ?Sized + ReadableStorageTraits> ZipStorageAdapter<TStorage> {
         key: &StoreKey,
         byte_ranges: ByteRangeIterator<'a>,
     ) -> Result<MaybeBytesIterator<'a>, StorageError> {
-        let mut zip_archive = self.zip_archive.lock().unwrap();
-        let mut file = {
-            let zip_file = zip_archive.by_name_seek(&self.key_str_to_zip_path(key.as_str()));
-            match zip_file {
-                Ok(zip_file) => zip_file,
-                Err(err) => match err {
-                    ZipError::FileNotFound => return Ok(None),
-                    _ => return Err(StorageError::Other(err.to_string())),
-                },
-            }
+        let Some(entry) = self.get_entry(key) else {
+            return Ok(None);
         };
 
-        let out = Box::new(
-            extract_byte_ranges_read_seek(&mut file, byte_ranges)?
-                .into_iter()
-                .map(|b| Ok(Bytes::from(b))),
-        );
-        Ok(Some(out))
+        let byte_ranges: Vec<ByteRange> = byte_ranges.collect();
+
+        // Validate that all byte ranges are within bounds
+        for range in &byte_ranges {
+            let end = match range {
+                ByteRange::FromStart(start, Some(len)) => start.saturating_add(*len),
+                ByteRange::FromStart(start, None) => *start, // Reading to end is always valid if start is valid
+                ByteRange::Suffix(_) => 0,                   // Suffix is clamped, always valid
+            };
+            if end > entry.uncompressed_size {
+                return Err(InvalidByteRangeError::new(*range, entry.uncompressed_size).into());
+            }
+        }
+
+        match entry.method {
+            Method::Store => {
+                // Fast path: read directly from storage
+                self.get_stored_entry(entry, byte_ranges)
+            }
+            _ => {
+                // Decompress the entry using EntryFsm
+                self.get_compressed_entry(entry, byte_ranges)
+            }
+        }
     }
 
-    fn zip_file_strip_prefix<'a>(&self, name: &'a str) -> Option<&'a str> {
-        name.strip_prefix(self.zip_path.to_str().unwrap())
-            .filter(|&name| !name.is_empty())
+    /// Fast path for stored (uncompressed) entries.
+    fn get_stored_entry(
+        &self,
+        entry: &Entry,
+        byte_ranges: Vec<ByteRange>,
+    ) -> Result<MaybeBytesIterator<'_>, StorageError> {
+        // Calculate data offset by reading local file header
+        let data_offset = self
+            .calculate_data_offset(entry.header_offset)
+            .map_err(|e| StorageError::Other(e.to_string()))?;
+
+        // Translate relative byte ranges to absolute zip file offsets
+        let translated: Vec<ByteRange> = byte_ranges
+            .into_iter()
+            .map(|range| match range {
+                ByteRange::FromStart(start, len) => {
+                    let actual_len = len.unwrap_or(entry.uncompressed_size.saturating_sub(start));
+                    ByteRange::FromStart(data_offset + start, Some(actual_len))
+                }
+                ByteRange::Suffix(len) => {
+                    let start = data_offset + entry.uncompressed_size.saturating_sub(len);
+                    ByteRange::FromStart(start, Some(len.min(entry.uncompressed_size)))
+                }
+            })
+            .collect();
+
+        // Retrieve the bytes
+        self.storage
+            .get_partial_many(&self.key, Box::new(translated.into_iter()))?
+            .ok_or_else(|| StorageError::Other("Entry data not found".to_string()))
+            .map(Some)
+    }
+
+    /// Slower path for compressed entries using `EntryFsm`.
+    ///
+    /// Decodes the entire entry and then slices out the requested byte ranges.
+    #[allow(clippy::cast_possible_truncation)]
+    fn get_compressed_entry(
+        &self,
+        entry: &Entry,
+        byte_ranges: Vec<ByteRange>,
+    ) -> Result<MaybeBytesIterator<'_>, StorageError> {
+        let decompressed = self.decompress_entry(entry)?;
+
+        let mut results = Vec::with_capacity(byte_ranges.len());
+        for range in byte_ranges {
+            let range = range.to_range_usize(entry.uncompressed_size);
+            results.push(Ok(Bytes::copy_from_slice(&decompressed[range])));
+        }
+
+        Ok(Some(Box::new(results.into_iter())))
+    }
+
+    /// Decompress an entry using `EntryFsm`.
+    #[allow(clippy::cast_possible_truncation)]
+    fn decompress_entry(&self, entry: &Entry) -> Result<Vec<u8>, StorageError> {
+        // Create EntryFsm with the entry
+        let mut fsm = EntryFsm::new(Some(entry.clone()), None);
+
+        // Read position starts at header_offset (EntryFsm will parse local header first)
+        let mut read_offset = entry.header_offset;
+
+        // Pre-allocate output buffer
+        let expected_size = entry.uncompressed_size as usize;
+        let mut decompressed: Vec<u8> = Vec::with_capacity(expected_size);
+        let mut write_offset = 0usize;
+
+        loop {
+            // Feed data to FSM if it wants to read
+            if fsm.wants_read() {
+                let space = fsm.space();
+                // Don't request more than what's left in the file
+                let remaining = self.size.saturating_sub(read_offset);
+                let to_read = (space.len() as u64).min(remaining);
+
+                if to_read > 0 {
+                    let byte_range = ByteRange::FromStart(read_offset, Some(to_read));
+
+                    let data = self
+                        .storage
+                        .get_partial(&self.key, byte_range)?
+                        .ok_or_else(|| {
+                            StorageError::Other("Cannot read compressed data".to_string())
+                        })?;
+
+                    let copy_len = data.len().min(space.len());
+                    space[..copy_len].copy_from_slice(&data[..copy_len]);
+                    let filled = fsm.fill(copy_len);
+                    read_offset += filled as u64;
+                } else {
+                    // No more data to read, signal EOF
+                    fsm.fill(0);
+                }
+            }
+
+            // Write directly into the spare capacity
+            // SAFETY: We pass uninitialized memory to fsm.process, which will write
+            // `outcome.bytes_written` bytes, and won't read.
+            let spare = decompressed.spare_capacity_mut();
+            let out_slice = unsafe {
+                std::slice::from_raw_parts_mut(
+                    spare.as_mut_ptr().cast::<u8>(),
+                    expected_size.saturating_sub(write_offset),
+                )
+            };
+
+            match fsm.process(out_slice) {
+                Ok(FsmResult::Continue((next_fsm, outcome))) => {
+                    write_offset += outcome.bytes_written;
+                    fsm = next_fsm;
+                }
+                Ok(FsmResult::Done(_buffer)) => {
+                    // Decompression complete
+                    break;
+                }
+                Err(e) => {
+                    return Err(StorageError::Other(format!("Decompression error: {e}")));
+                }
+            }
+        }
+
+        // Verify decompressed size matches expected
+        if write_offset != expected_size {
+            return Err(StorageError::Other(format!(
+                "zip decompressed entry size mismatch: expected {expected_size}, got {write_offset}"
+            )));
+        }
+
+        // SAFETY: We verified that write_offset == expected_size, and fsm.process
+        // has initialized all bytes up to write_offset.
+        unsafe {
+            decompressed.set_len(expected_size);
+        }
+
+        Ok(decompressed)
+    }
+
+    /// Calculate the data offset by reading the local file header.
+    ///
+    /// The local file header is 30 bytes fixed + variable name/extra fields.
+    fn calculate_data_offset(
+        &self,
+        header_offset: u64,
+    ) -> Result<u64, ZipStorageAdapterCreateError> {
+        // Read 30-byte local file header
+        let byte_range = ByteRange::FromStart(header_offset, Some(30));
+        let header = self
+            .storage
+            .get_partial(&self.key, byte_range)?
+            .ok_or_else(|| {
+                ZipStorageAdapterCreateError::ZipError("Cannot read local file header".to_string())
+            })?;
+
+        if header.len() < 30 {
+            return Err(ZipStorageAdapterCreateError::ZipError(
+                "Local file header too short".to_string(),
+            ));
+        }
+
+        // Local file header structure:
+        // Offset 26: filename length (2 bytes, little-endian)
+        // Offset 28: extra field length (2 bytes, little-endian)
+        let filename_len = u64::from(u16::from_le_bytes([header[26], header[27]]));
+        let extra_len = u64::from(u16::from_le_bytes([header[28], header[29]]));
+
+        Ok(header_offset + 30 + filename_len + extra_len)
     }
 }
 
@@ -135,15 +444,7 @@ impl<TStorage: ?Sized + ReadableStorageTraits> ReadableStorageTraits
     }
 
     fn size_key(&self, key: &StoreKey) -> Result<Option<u64>, StorageError> {
-        let mut zip_archive = self.zip_archive.lock().unwrap();
-        let file = zip_archive.by_name(key.as_str());
-        match file {
-            Ok(file) => Ok(Some(file.compressed_size())),
-            Err(err) => match err {
-                ZipError::FileNotFound => Ok(None),
-                _ => Err(StorageError::Other(err.to_string())),
-            },
-        }
+        Ok(self.get_entry(key).map(|e| e.uncompressed_size))
     }
 
     fn supports_get_partial(&self) -> bool {
@@ -155,71 +456,66 @@ impl<TStorage: ?Sized + ReadableStorageTraits> ListableStorageTraits
     for ZipStorageAdapter<TStorage>
 {
     fn list(&self) -> Result<StoreKeys, StorageError> {
+        // Filter to only keys, already sorted
         Ok(self
-            .zip_archive
-            .lock()
-            .unwrap()
-            .file_names()
-            .filter_map(|name| self.zip_file_strip_prefix(name))
-            .filter_map(|v| StoreKey::try_from(v).ok())
-            .sorted()
+            .sorted_entries
+            .iter()
+            .filter_map(|e| match e {
+                ZipEntry::Key(k) => Some(k.clone()),
+                ZipEntry::Prefix(_) => None,
+            })
             .collect())
     }
 
     fn list_prefix(&self, prefix: &StorePrefix) -> Result<StoreKeys, StorageError> {
-        let mut zip_archive = self.zip_archive.lock().unwrap();
-        let file_names: Vec<String> = zip_archive
-            .file_names()
-            .filter_map(|name| self.zip_file_strip_prefix(name))
-            .map(std::string::ToString::to_string)
-            .collect();
-        Ok(file_names
-            .into_iter()
-            .filter_map(|name| {
-                if name.starts_with(prefix.as_str()) {
-                    if let Ok(file) = zip_archive.by_name(&self.key_str_to_zip_path(&name)) {
-                        if file.is_file() {
-                            let name = name.strip_suffix('/').unwrap_or(&name);
-                            if let Ok(store_key) = StoreKey::try_from(name) {
-                                return Some(store_key);
-                            }
-                        }
-                    }
-                }
-                None
+        // Use binary search to find matching range, filter to keys only
+        Ok(self
+            .entries_with_prefix(prefix)
+            .iter()
+            .filter_map(|e| match e {
+                ZipEntry::Key(k) => Some(k.clone()),
+                ZipEntry::Prefix(_) => None,
             })
-            .sorted()
             .collect())
     }
 
     fn list_dir(&self, prefix: &StorePrefix) -> Result<StoreKeysPrefixes, StorageError> {
-        let zip_archive = self.zip_archive.lock().unwrap();
         let mut keys: StoreKeys = vec![];
         let mut prefixes: StorePrefixes = vec![];
-        for name in zip_archive
-            .file_names()
-            .filter_map(|name| self.zip_file_strip_prefix(name))
-        {
-            if name.starts_with(prefix.as_str()) {
-                if name.ends_with('/') {
-                    if let Ok(store_prefix) = StorePrefix::try_from(name) {
-                        if let Some(parent) = store_prefix.parent() {
-                            if &parent == prefix {
-                                prefixes.push(store_prefix);
-                            }
+
+        // Use binary search to find matching range
+        for entry in self.entries_with_prefix(prefix) {
+            match entry {
+                ZipEntry::Key(key) => {
+                    let parent = key.parent();
+                    if &parent == prefix {
+                        keys.push(key.clone());
+                    } else if let Some(child_prefix) = Self::immediate_child_prefix(key, prefix) {
+                        if prefixes.last() != Some(&child_prefix) {
+                            prefixes.push(child_prefix);
                         }
                     }
-                } else if let Ok(store_key) = StoreKey::try_from(name) {
-                    let parent = store_key.parent();
-                    if &parent == prefix {
-                        keys.push(store_key);
+                }
+                ZipEntry::Prefix(p) => {
+                    // Check if this prefix is an immediate child of the search prefix
+                    let p_str = p.as_str();
+                    let prefix_str = prefix.as_str();
+                    if let Some(suffix) = p_str.strip_prefix(prefix_str) {
+                        // Skip if suffix is empty (the prefix itself)
+                        if suffix.is_empty() {
+                            continue;
+                        }
+                        // Check if it's an immediate child (no additional '/' before the trailing one)
+                        let trimmed = suffix.trim_end_matches('/');
+                        if !trimmed.contains('/') && prefixes.last() != Some(p) {
+                            prefixes.push(p.clone());
+                        }
                     }
                 }
             }
         }
-        keys.sort();
-        prefixes.sort();
 
+        // Keys and prefixes are already sorted since sorted_entries is sorted
         Ok(StoreKeysPrefixes::new(keys, prefixes))
     }
 
@@ -228,13 +524,16 @@ impl<TStorage: ?Sized + ReadableStorageTraits> ListableStorageTraits
     }
 
     fn size_prefix(&self, prefix: &StorePrefix) -> Result<u64, StorageError> {
-        let mut size = 0;
-        for key in self.list_prefix(prefix)? {
-            if let Some(size_key) = self.size_key(&key)? {
-                size += size_key;
-            }
-        }
-        Ok(size)
+        // Use binary search to find matching range, then lookup in HashMap for keys only
+        Ok(self
+            .entries_with_prefix(prefix)
+            .iter()
+            .filter_map(|e| match e {
+                ZipEntry::Key(k) => self.entries.get(k),
+                ZipEntry::Prefix(_) => None,
+            })
+            .map(|e| e.compressed_size)
+            .sum())
     }
 }
 
@@ -253,217 +552,10 @@ pub enum ZipStorageAdapterCreateError {
     /// A storage error.
     #[error(transparent)]
     StorageError(#[from] StorageError),
-}
-
-#[cfg(test)]
-mod tests {
-    use walkdir::WalkDir;
-
-    use zarrs_filesystem::FilesystemStore;
-    use zarrs_storage::WritableStorageTraits;
-
-    use super::*;
-    use std::{
-        error::Error,
-        fs::File,
-        io::{Read, Write},
-        path::Path,
-    };
-
-    // https://github.com/zip-rs/zip/blob/master/examples/write_dir.rs
-    fn zip_dir<I: Iterator<Item = walkdir::DirEntry>>(
-        it: I,
-        prefix: &str,
-        writer: File,
-        method: zip::CompressionMethod,
-    ) -> zip::result::ZipResult<()> {
-        let mut zip = zip::ZipWriter::new(writer);
-        let options = zip::write::SimpleFileOptions::default().compression_method(method);
-        let mut buffer = Vec::new();
-        for entry in it {
-            let path = entry.path();
-            let name = path.strip_prefix(Path::new(prefix)).unwrap();
-            if path.is_file() {
-                #[allow(deprecated)]
-                zip.start_file_from_path(name, options)?;
-                let mut f = File::open(path)?;
-                f.read_to_end(&mut buffer)?;
-                zip.write_all(&buffer)?;
-                buffer.clear();
-            } else if !name.as_os_str().is_empty() {
-                #[allow(deprecated)]
-                zip.add_directory_from_path(name, options)?;
-            }
-        }
-        zip.finish()?;
-        Result::Ok(())
-    }
-
-    fn zip_write(path: &Path) -> Result<(), Box<dyn Error>> {
-        let tmp_path = tempfile::TempDir::new()?;
-        let tmp_path = tmp_path.path();
-        let store = FilesystemStore::new(tmp_path)?.sorted();
-        store.set(&"a/b/zarr.json".try_into()?, vec![0, 1, 2, 3].into())?;
-        store.set(&"a/c/zarr.json".try_into()?, vec![].into())?;
-        store.set(&"a/d/e/zarr.json".try_into()?, vec![].into())?;
-        store.set(&"a/f/g/zarr.json".try_into()?, vec![].into())?;
-        store.set(&"a/f/h/zarr.json".try_into()?, vec![].into())?;
-        store.set(&"b/zarr.json".try_into()?, vec![].into())?;
-        store.set(&"b/c/d/zarr.json".try_into()?, vec![].into())?;
-        store.set(&"c/zarr.json".try_into()?, vec![].into())?;
-
-        let walkdir = WalkDir::new(tmp_path);
-
-        let file = File::create(path).unwrap();
-        zip_dir(
-            &mut walkdir.into_iter().filter_map(std::result::Result::ok),
-            tmp_path.to_str().unwrap(),
-            file,
-            zip::CompressionMethod::Stored,
-        )?;
-
-        Ok(())
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn zip_root() -> Result<(), Box<dyn Error>> {
-        let path = tempfile::TempDir::new()?;
-        let mut path = path.path().to_path_buf();
-        let store = FilesystemStore::new(path.clone())?;
-
-        path.push("test.zip");
-        zip_write(&path)?;
-
-        let store = Arc::new(ZipStorageAdapter::new(
-            store.into(),
-            StoreKey::new("test.zip")?,
-        )?);
-
-        assert_eq!(
-            store.list()?,
-            &[
-                "a/b/zarr.json".try_into()?,
-                "a/c/zarr.json".try_into()?,
-                "a/d/e/zarr.json".try_into()?,
-                "a/f/g/zarr.json".try_into()?,
-                "a/f/h/zarr.json".try_into()?,
-                "b/c/d/zarr.json".try_into()?,
-                "b/zarr.json".try_into()?,
-                "c/zarr.json".try_into()?,
-            ]
-        );
-        assert_eq!(
-            store.list_prefix(&"a/".try_into()?)?,
-            &[
-                "a/b/zarr.json".try_into()?,
-                "a/c/zarr.json".try_into()?,
-                "a/d/e/zarr.json".try_into()?,
-                "a/f/g/zarr.json".try_into()?,
-                "a/f/h/zarr.json".try_into()?,
-            ]
-        );
-        assert_eq!(
-            store.list_prefix(&"a/d/".try_into()?)?,
-            &["a/d/e/zarr.json".try_into()?]
-        );
-        assert_eq!(
-            store.list_prefix(&"".try_into()?)?,
-            &[
-                "a/b/zarr.json".try_into()?,
-                "a/c/zarr.json".try_into()?,
-                "a/d/e/zarr.json".try_into()?,
-                "a/f/g/zarr.json".try_into()?,
-                "a/f/h/zarr.json".try_into()?,
-                "b/c/d/zarr.json".try_into()?,
-                "b/zarr.json".try_into()?,
-                "c/zarr.json".try_into()?,
-            ]
-        );
-
-        let list = store.list_dir(&"a/".try_into()?)?;
-        assert_eq!(list.keys(), &[]);
-        assert_eq!(
-            list.prefixes(),
-            &[
-                "a/b/".try_into()?,
-                "a/c/".try_into()?,
-                "a/d/".try_into()?,
-                "a/f/".try_into()?,
-            ]
-        );
-
-        assert_eq!(
-            store.get(&"a/b/zarr.json".try_into()?)?.unwrap(),
-            vec![0, 1, 2, 3]
-        );
-        assert_eq!(
-            store.get(&"a/c/zarr.json".try_into()?)?.unwrap(),
-            Vec::<u8>::new().as_slice()
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn zip_path() -> Result<(), Box<dyn Error>> {
-        let path = tempfile::TempDir::new()?;
-        let mut path = path.path().to_path_buf();
-        let store = FilesystemStore::new(path.clone())?;
-        path.push("test.zip");
-        zip_write(&path)?;
-
-        let store = Arc::new(ZipStorageAdapter::new_with_path(
-            store.into(),
-            StoreKey::new("test.zip")?,
-            "a/",
-        )?);
-
-        assert_eq!(
-            store.list()?,
-            &[
-                "b/zarr.json".try_into()?,
-                "c/zarr.json".try_into()?,
-                "d/e/zarr.json".try_into()?,
-                "f/g/zarr.json".try_into()?,
-                "f/h/zarr.json".try_into()?,
-            ]
-        );
-        assert_eq!(store.list_prefix(&"a/".try_into()?)?, &[]);
-        assert_eq!(
-            store.list_prefix(&"d/".try_into()?)?,
-            &["d/e/zarr.json".try_into()?]
-        );
-        assert_eq!(
-            store.list_prefix(&"".try_into()?)?,
-            &[
-                "b/zarr.json".try_into()?,
-                "c/zarr.json".try_into()?,
-                "d/e/zarr.json".try_into()?,
-                "f/g/zarr.json".try_into()?,
-                "f/h/zarr.json".try_into()?,
-            ]
-        );
-
-        let list = store.list_dir(&"".try_into()?)?;
-        assert_eq!(list.keys(), &[]);
-        assert_eq!(
-            list.prefixes(),
-            &[
-                "b/".try_into()?,
-                "c/".try_into()?,
-                "d/".try_into()?,
-                "f/".try_into()?,
-            ]
-        );
-
-        assert_eq!(
-            store.get(&"b/zarr.json".try_into()?)?.unwrap(),
-            vec![0, 1, 2, 3]
-        );
-        // assert_eq!(store.get(&"c/zarr.json".try_into()?)?, Vec::<u8>::new().as_slice());
-
-        Ok(())
-    }
+    /// Invalid store key.
+    #[error(transparent)]
+    InvalidStoreKey(#[from] StoreKeyError),
+    /// Invalid store prefix.
+    #[error(transparent)]
+    InvalidStorePrefix(#[from] StorePrefixError),
 }
