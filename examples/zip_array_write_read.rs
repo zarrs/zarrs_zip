@@ -177,6 +177,17 @@ fn zip_array_write_read() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     println!("Created zip {path_zip:?} containing {:?}\n", zarr_dir);
 
+    // // Also write to tests/example.zip for async example testing
+    // let example_zip_path = Path::new("tests/example.zip");
+    // let file = File::create(example_zip_path).unwrap();
+    // zip_dir(
+    //     &mut WalkDir::new(&zarr_dir).into_iter().filter_map(|e| e.ok()),
+    //     zarr_dir.to_str().unwrap(),
+    //     file,
+    //     zip::CompressionMethod::Stored,
+    // )?;
+    // println!("Also created {example_zip_path:?}\n");
+
     let zip_key = StoreKey::new("zarr_array.zip")?;
     println!(
         "Create a ZipStorageAdapter for store at {:?} with {}",
