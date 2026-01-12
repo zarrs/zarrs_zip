@@ -18,6 +18,9 @@ use zarrs_storage::{
 };
 use zarrs_zip::ZipStorageAdapter;
 
+#[cfg(feature = "async")]
+use zarrs_storage::{AsyncListableStorageTraits, AsyncReadableStorageTraits};
+
 // https://github.com/zip-rs/zip/blob/master/examples/write_dir.rs
 fn zip_dir<I: Iterator<Item = walkdir::DirEntry>>(
     it: I,
@@ -309,6 +312,50 @@ fn store_test_read_list() -> Result<(), Box<dyn Error>> {
     // Run the store tests
     zarrs_storage::store_test::store_read(&zip_store)?;
     zarrs_storage::store_test::store_list(&zip_store)?;
+
+    Ok(())
+}
+
+#[cfg(feature = "async")]
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn zip_async_remote() -> Result<(), Box<dyn Error>> {
+    use object_store::http::HttpBuilder;
+    use zarrs_object_store::AsyncObjectStore;
+
+    // Create an HTTP object store pointing to the raw GitHub URL
+    let http_store = HttpBuilder::new()
+        .with_url("https://github.com/zarrs/zarrs_zip/raw/refs/heads/main/tests/")
+        .build()?;
+    let async_store = Arc::new(AsyncObjectStore::new(http_store));
+
+    // Create the zip storage adapter asynchronously
+    let zip_store =
+        Arc::new(ZipStorageAdapter::new_async(async_store, StoreKey::new("zarr.zip")?).await?);
+
+    // Test list
+    let keys = zip_store.list().await?;
+    assert!(!keys.is_empty(), "Expected non-empty list of keys");
+
+    // Test list_prefix for the root
+    let root_keys = zip_store.list_prefix(&"".try_into()?).await?;
+    assert_eq!(keys, root_keys);
+
+    // Test list_dir at root
+    let root_dir = zip_store.list_dir(&"".try_into()?).await?;
+    assert!(
+        !root_dir.keys().is_empty() || !root_dir.prefixes().is_empty(),
+        "Expected non-empty root directory listing"
+    );
+
+    // Test reading zarr.json if it exists
+    if let Some(data) = zip_store.get(&"zarr.json".try_into()?).await? {
+        assert!(!data.is_empty(), "Expected non-empty zarr.json");
+    }
+
+    // Test size
+    let size = zip_store.size().await?;
+    assert!(size > 0, "Expected non-zero zip file size");
 
     Ok(())
 }

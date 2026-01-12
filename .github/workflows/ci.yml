@@ -20,10 +20,12 @@ jobs:
         include:
           - toolchain: "stable"
             features: ""
+          - toolchain: "stable"
+            features: "--all-features"
           - toolchain: "beta"
-            features: ""
+            features: "--all-features"
           - toolchain: "nightly"
-            features: ""
+            features: "--all-features"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

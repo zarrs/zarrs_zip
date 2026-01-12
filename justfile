@@ -7,12 +7,12 @@ help:
 
 # Build (cargo check)
 build:
-    cargo +{{TOOLCHAIN}} check
+    cargo +{{TOOLCHAIN}} check --all-features
 
 # Test
 test:
-    cargo +{{TOOLCHAIN}} test
-    cargo +{{TOOLCHAIN}} test --examples
+    cargo +{{TOOLCHAIN}} test --all-features
+    cargo +{{TOOLCHAIN}} test --all-features --examples
 
 # Format with rustfmt
 fmt:
