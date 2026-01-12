@@ -41,7 +41,7 @@ async = ["dep:async-trait", "dep:futures", "zarrs_storage/async"]
 [dependencies]
 async-trait = { version = "0.1", optional = true }
 derive_more = { version = "2.0.0", features = ["from"] }
-futures = { version = "0.3", optional = true }
+futures = { version = "0.3.31", optional = true }
 itertools = "0.14.0"
 thiserror = "2.0.12"
 zarrs_storage = "0.4.2"
