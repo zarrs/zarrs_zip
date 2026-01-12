@@ -6,7 +6,10 @@ use object_store::http::HttpBuilder;
 use zarrs::{
     array::Array,
     node::Node,
-    storage::AsyncReadableStorageTraits,
+    storage::{
+        AsyncReadableListableStorage, AsyncReadableStorageTraits,
+        storage_adapter::usage_log::UsageLogStorageAdapter,
+    },
 };
 use zarrs_object_store::AsyncObjectStore;
 use zarrs_storage::StoreKey;
@@ -14,7 +17,7 @@ use zarrs_zip::ZipStorageAdapter;
 
 const ARRAY_PATH: &str = "/";
 
-async fn read_array_from_store<TStorage: AsyncReadableStorageTraits + 'static>(
+async fn read_array_from_store<TStorage: AsyncReadableStorageTraits + ?Sized + 'static>(
     array: Array<TStorage>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Read the whole array
@@ -40,18 +43,29 @@ async fn read_array_from_store<TStorage: AsyncReadableStorageTraits + 'static>(
     Ok(())
 }
 
-async fn zip_array_read_async() -> Result<(), Box<dyn std::error::Error>> {
+async fn zip_array_read_async(usage_log: bool) -> Result<(), Box<dyn std::error::Error>> {
     // Create an HTTP object store pointing to the raw GitHub URL
-    let store = HttpBuilder::new()
+    let http_store = HttpBuilder::new()
         .with_url("https://github.com/zarrs/zarrs_zip/raw/refs/heads/main/tests/")
         .build()?;
-    let store = Arc::new(AsyncObjectStore::new(store));
+    let store = Arc::new(AsyncObjectStore::new(http_store));
 
     println!("Fetching remote zip from GitHub...\n");
 
+    // Optionally wrap with usage log adapter
+    let store: AsyncReadableListableStorage = if usage_log {
+        let log_writer = Arc::new(std::sync::Mutex::new(std::io::stdout()));
+        Arc::new(UsageLogStorageAdapter::new(store, log_writer, || {
+            chrono::Utc::now().format("[%T%.3f] ").to_string()
+        }))
+    } else {
+        store
+    };
+
     // Create the zip storage adapter asynchronously
     let zip_key = StoreKey::new("example.zip")?;
-    let store = Arc::new(ZipStorageAdapter::new_async(store, zip_key).await?);
+    let store: AsyncReadableListableStorage =
+        Arc::new(ZipStorageAdapter::new_async(store, zip_key).await?);
 
     // Open the array
     let array = Array::async_open(store.clone(), ARRAY_PATH).await?;
@@ -74,7 +88,8 @@ async fn zip_array_read_async() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::main]
 async fn main() {
-    if let Err(err) = zip_array_read_async().await {
+    let usage_log = std::env::args().any(|arg| arg == "--usage-log");
+    if let Err(err) = zip_array_read_async(usage_log).await {
         println!("{:?}", err);
     }
 }
