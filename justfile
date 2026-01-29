@@ -24,7 +24,7 @@ clippy:
 
 # Generate documentation
 doc:
-    RUSTDOCFLAGS="-D warnings --cfg docsrs" cargo +{{TOOLCHAIN}} doc -Z unstable-options -Z rustdoc-scrape-examples --no-deps
+    RUSTDOCFLAGS="-D warnings --cfg docsrs" cargo +{{TOOLCHAIN}} doc -Z unstable-options -Z rustdoc-scrape-examples --all-features --no-deps
 
 # Build/test/clippy/doc/check formatting - recommended before a PR
 check: build test clippy doc
