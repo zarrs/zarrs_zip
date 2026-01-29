@@ -17,6 +17,10 @@
 //!
 //! See a full example at [examples/zip_array_write_read.rs](https://github.com/zarrs/zarrs_zip/blob/main/examples/zip_array_write_read.rs).
 //!
+//! ## `zarrs` Version Compatibility Matrix
+//!
+#![doc = include_str!("../doc/version_compatibility_matrix.md")]
+//!
 //! ## Licence
 //! `zarrs_zip` is licensed under either of
 //! - the Apache License, Version 2.0 [LICENSE-APACHE](https://docs.rs/crate/zarrs_zip/latest/source/LICENCE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0> or
