@@ -26,6 +26,9 @@ missing_panics_doc = "warn"
 missing_errors_doc = "warn"
 # wildcard_enum_match_arm = "warn"
 
+[package.metadata.docs.rs]
+all-features = true
+
 [[example]]
 name = "zip_array_write_read"
 doc-scrape-examples = true
