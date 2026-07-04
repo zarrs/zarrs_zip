@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased](https://github.com/zarrs/zarrs_zip/compare/v0.5.2...HEAD)
 
+### Added
+- Implement `Debug` for `ZipStorageAdapter`
+
 ## [0.5.2](https://github.com/zarrs/zarrs_zip/releases/tag/v0.5.2) - 2026-06-10
 
 ### Fixed

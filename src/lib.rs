@@ -73,6 +73,16 @@ pub struct ZipStorageAdapter<TStorage: ?Sized> {
     sorted_entries: Vec<ZipEntry>,
 }
 
+impl<TStorage: ?Sized> core::fmt::Debug for ZipStorageAdapter<TStorage> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ZipStorageAdapter")
+            .field("size", &self.size)
+            .field("key", &self.key)
+            .field("num_entries", &self.entries.len())
+            .finish_non_exhaustive()
+    }
+}
+
 impl<TStorage: ?Sized> ZipStorageAdapter<TStorage> {
     fn strip_zip_path_prefix<'a>(name: &'a str, zip_path: &Path) -> Option<&'a str> {
         let prefix = zip_path.to_str().unwrap_or("");
