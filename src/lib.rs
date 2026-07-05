@@ -7,11 +7,9 @@
 //! use zarrs_filesystem::FilesystemStore;
 //! use zarrs_zip::ZipStorageAdapter;
 //!
-//! let fs_root = PathBuf::from("/path/to/a/directory");
-//! # let fs_root = PathBuf::from("tests/");
-//! let fs_store = Arc::new(FilesystemStore::new(&fs_root)?);
-//! let zip_key = StoreKey::new("zarr.zip")?;
-//! let zip_store = Arc::new(ZipStorageAdapter::new(fs_store, zip_key)?);
+//! let fs_store = Arc::new(FilesystemStore::new("/path/to/a/directory/zarr.zip")?);
+//! # let fs_store = Arc::new(FilesystemStore::new("tests/zarr.zip")?);
+//! let zip_store = Arc::new(ZipStorageAdapter::new(fs_store, StoreKey::root())?);
 //! # Ok::<_, Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -66,6 +64,9 @@ pub struct ZipStorageAdapter<TStorage: ?Sized> {
     /// Reference to underlying storage.
     storage: Arc<TStorage>,
     /// Store key for the zip file.
+    ///
+    /// An empty key addresses the entire underlying storage resource,
+    /// e.g. a `FilesystemStore` rooted directly at a zip file.
     key: StoreKey,
     /// `HashMap` for O(1) entry lookup by key.
     entries: HashMap<StoreKey, Entry>,
