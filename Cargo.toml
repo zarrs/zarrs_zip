@@ -37,6 +37,10 @@ doc-scrape-examples = true
 name = "zip_array_write_read_async"
 required-features = ["async"]
 
+[[bench]]
+name = "read_comparison"
+harness = false
+
 [features]
 default = []
 async = ["dep:async-trait", "dep:futures", "zarrs_storage/async"]
@@ -51,6 +55,7 @@ zarrs_storage = "0.4.2"
 rc-zip = "5.4.1"
 
 [dev-dependencies]
+criterion = "0.8.1"
 zip = "6.0.0"
 chrono = "0.4.42"
 object_store = { version = "0.13", features = ["http"] }
