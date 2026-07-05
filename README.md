@@ -13,10 +13,8 @@ use zarrs_storage::StoreKey;
 use zarrs_filesystem::FilesystemStore;
 use zarrs_zip::ZipStorageAdapter;
 
-let fs_root = PathBuf::from("/path/to/a/directory");
-let fs_store = Arc::new(FilesystemStore::new(&fs_root)?);
-let zip_key = StoreKey::new("zarr.zip")?;
-let zip_store = Arc::new(ZipStorageAdapter::new(fs_store, zip_key)?);
+let fs_store = Arc::new(FilesystemStore::new("/path/to/a/directory/zarr.zip")?);
+let zip_store = Arc::new(ZipStorageAdapter::new(fs_store, StoreKey::root())?);
 ```
 
 See a full example at [examples/zip_array_write_read.rs](./examples/zip_array_write_read.rs).

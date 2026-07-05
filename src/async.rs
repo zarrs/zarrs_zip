@@ -18,6 +18,9 @@ use zarrs_storage::{StoreKeys, StoreKeysPrefixes};
 impl<TStorage: ?Sized + AsyncReadableStorageTraits> ZipStorageAdapter<TStorage> {
     /// Create a new zip storage adapter asynchronously.
     ///
+    /// Pass [`StoreKey::root()`] to treat the entire `storage` as the zip file
+    /// (e.g., a `FilesystemStore` rooted directly at a zip file).
+    ///
     /// # Errors
     /// Returns a [`ZipStorageAdapterCreateError`] if the store value at `key` is not a valid zip file.
     pub async fn new_async(
@@ -28,6 +31,9 @@ impl<TStorage: ?Sized + AsyncReadableStorageTraits> ZipStorageAdapter<TStorage> 
     }
 
     /// Create a new zip storage adapter to `path` within the zip file asynchronously.
+    ///
+    /// Pass [`StoreKey::root()`] to treat the entire `storage` as the zip file
+    /// (e.g., a `FilesystemStore` rooted directly at a zip file).
     ///
     /// # Errors
     /// Returns a [`ZipStorageAdapterCreateError`] if the store value at `key` is not a valid zip file.

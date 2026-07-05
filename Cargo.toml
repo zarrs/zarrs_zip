@@ -60,7 +60,7 @@ walkdir = "2.3.2"
 zarrs = { version = "0.22.5", features = ["gzip", "async", "ndarray"] }
 zarrs_filesystem = "0.3.4"
 zarrs_object_store = "0.6.0"
-zarrs_storage = { version = "0.4.2", features = ["tests"] }
+zarrs_storage = { version = "0.4.4", features = ["tests"] }
 
 [patch.crates-io]
 zarrs_filesystem = { git = "https://github.com/zarrs/zarrs" }
